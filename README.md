@@ -490,25 +490,16 @@ Note: runtine for tests are not linear, several factors can affect the runtime:
 
 #### m7a.medium
 
-2 segment hosts, 2 segments, 1st run: 8m0s
-2 segment hosts, 2 segments, 2nd run: 4m56s
-2 segment hosts, 4 segments, 1st run: 8m3s
-2 segment hosts, 4 segments, 2nd run: 5m7s
-
-4 segment hosts, 2 segments, 1st run: 9m58s
-4 segment hosts, 2 segments, 2nd run: 5m57s
-4 segment hosts, 4 segments, 1st run: 10m29s
-4 segment hosts, 4 segments, 2nd run: 5m55s
-
-10 segment hosts, 2 segments, 1st run: 17m51s
-10 segment hosts, 2 segments, 2nd run: 10m27s
-10 segment hosts, 4 segments, 1st run: 19m26s
-10 segment hosts, 4 segments, 2nd run: 10m19s
-
-20 segment hosts, 2 segments, 1st run: 28m53s
-20 segment hosts, 2 segments, 2nd run: 15m0s
-20 segment hosts, 4 segments, 1st run: 30m44s
-20 segment hosts, 4 segments, 2nd run: 15m5s
+| Segment Hosts | Segments | Run 1 | Run 2 |
+|:---:|:---:|---:|---:|
+| 2  | 2 |  8m0s |  4m56s |
+| 2  | 4 | 8m3s |  5m 55s |
+| 4  | 2 |  9m 58s |  5m 57s |
+| 4  | 4 | 10m 29s |  5m 55s |
+| 10 | 2 | 17m 51s | 10m 27s |
+| 10 | 4 | 19m 26s | 10m 19s |
+| 20 | 2 | 28m 53s | 15m  0s |
+| 20 | 4 | 30m 44s | 15m  5s |
 
 4 GB RAM is not enough for the `coordinator` to manage 40 segments, operation times out.
 
@@ -516,103 +507,62 @@ In general, `m7a.medium` instances are too small to run 2 WarehousePG instances.
 
 #### m7a.large
 
-2 segment hosts, 2 segments, 1st run: 7m48s
-2 segment hosts, 2 segments, 2nd run: 5m0s
-2 segment hosts, 4 segments, 1st run: 7m49s
-2 segment hosts, 4 segments, 2nd run: 5m2s
-
-4 segment hosts, 2 segments, 1st run: 9m48s
-4 segment hosts, 2 segments, 2nd run: 5m48s
-4 segment hosts, 4 segments, 1st run: 9m17s
-4 segment hosts, 4 segments, 2nd run: 5m56s
-
-10 segment hosts, 2 segments, 1st run: 16m48s
-10 segment hosts, 2 segments, 2nd run: 9m30s
-10 segment hosts, 4 segments, 1st run: 17m21s
-10 segment hosts, 4 segments, 2nd run: 9m27s
-
-20 segment hosts, 2 segments, 1st run: 31m23s
-20 segment hosts, 2 segments, 2nd run: 15m8s
-20 segment hosts, 4 segments, 1st run: 30m54s
-20 segment hosts, 4 segments, 2nd run: 15m34s
-
-40 segment hosts, 2 segments, 1st run: 56m45s
-40 segment hosts, 2 segments, 2nd run: 27m31s
-40 segment hosts, 4 segments, 1st run: 50m40s
-40 segment hosts, 4 segments, 2nd run: 21m13s
+| Segment Hosts | Segments | Run 1 | Run 2 |
+|:---:|:---:|---:|---:|
+|  2 | 2 |  7m 48s |  5m  0s |
+|  2 | 4 |  7m 49s |  5m  2s |
+|  4 | 2 |  9m 48s |  5m 48s |
+|  4 | 4 |  9m 17s |  5m 56s |
+| 10 | 2 | 16m 48s |  9m 30s |
+| 10 | 4 | 17m 21s |  9m 27s |
+| 20 | 2 | 31m 23s | 15m  8s |
+| 20 | 4 | 30m 54s | 15m 34s |
+| 40 | 2 | 56m 45s | 27m 31s |
+| 40 | 4 | 50m 40s | 21m 13s |
 
 #### m7a.xlarge
 
-2 segment hosts, 2 segments, 1st run: 7m12s
-2 segment hosts, 2 segments, 2nd run: 4m26s
-2 segment hosts, 4 segments, 1st run: 7m28s
-2 segment hosts, 4 segments, 2nd run: 4m30s
+| Segment Hosts | Segments | Run 1 | Run 2 |
+|:---:|:---:|---:|---:|
+|  2 | 2 |  7m 12s |  4m 26s |
+|  2 | 4 |  7m 28s |  4m 30s |
+|  4 | 2 |  8m 10s |  4m 56s |
+|  4 | 4 |  8m 50s |  4m 58s |
+| 10 | 2 | 15m  3s |  7m 56s |
+| 10 | 4 | 16m 35s |  7m 58s |
+| 20 | 2 | 26m 40s | 12m 13s |
+| 20 | 4 | 27m 36s | 13m  0s |
+| 40 | 2 | 50m 52s | 24m 22s |
+| 40 | 4 | 52m  8s | 21m 20s |
 
-4 segment hosts, 2 segments, 1st run: 8m10s
-4 segment hosts, 2 segments, 2nd run: 4m56s
-4 segment hosts, 4 segments, 1st run: 8m50s
-4 segment hosts, 4 segments, 2nd run: 4m58s
-
-10 segment hosts, 2 segments, 1st run: 15m3s
-10 segment hosts, 2 segments, 2nd run: 7m56s
-10 segment hosts, 4 segments, 1st run: 16m35s
-10 segment hosts, 4 segments, 2nd run: 7m58s
-
-20 segment hosts, 2 segments, 1st run: 26m40s
-20 segment hosts, 2 segments, 2nd run: 12m13s
-20 segment hosts, 4 segments, 1st run: 27m36s
-20 segment hosts, 4 segments, 2nd run: 13m0s
-
-40 segment hosts, 2 segments, 1st run: 50m52s
-40 segment hosts, 2 segments, 2nd run: 24m22s
-40 segment hosts, 4 segments, 1st run: 52m8s
-40 segment hosts, 4 segments, 2nd run: 21m20s
 
 #### m7a.2xlarge
 
-2 segment hosts, 2 segments, 1st run: 7m3s
-2 segment hosts, 2 segments, 2nd run: 4m52s
-2 segment hosts, 4 segments, 1st run: 7m48s
-2 segment hosts, 4 segments, 2nd run: 4m32s
-
-4 segment hosts, 2 segments, 1st run: 8m32s
-4 segment hosts, 2 segments, 2nd run: 5m1s
-4 segment hosts, 4 segments, 1st run: 8m39s
-4 segment hosts, 4 segments, 2nd run: 4m59s
-
-10 segment hosts, 2 segments, 1st run: 15m17s
-10 segment hosts, 2 segments, 2nd run: 8m16s
-10 segment hosts, 4 segments, 1st run: 16m27s
-10 segment hosts, 4 segments, 2nd run: 8m5s
-10 segment hosts, 6 segments, 1st run: 17m38s
-10 segment hosts, 6 segments, 2nd run: 8m7s
-10 segment hosts, 8 segments, 1st run: 17m10s
-10 segment hosts, 8 segments, 2nd run: 8m6s
-
-20 segment hosts, 2 segments, 1st run: 27m21s
-20 segment hosts, 2 segments, 2nd run: 12m23s
-20 segment hosts, 4 segments, 1st run: 31m50s
-20 segment hosts, 4 segments, 2nd run: 16m46s
-20 segment hosts, 6 segments, 1st run: 29m34s
-20 segment hosts, 6 segments, 2nd run: 13m12s
-20 segment hosts, 8 segments, 1st run: 34m2s
-20 segment hosts, 8 segments, 2nd run: 15m46s
-
-40 segment hosts, 2 segments, 1st run: 62m13s
-40 segment hosts, 2 segments, 2nd run: 34m21s
-40 segment hosts, 4 segments, 1st run: 66m42s
-40 segment hosts, 4 segments, 2nd run: 38m54s
-40 segment hosts, 6 segments, 1st run: 65m25s
-40 segment hosts, 6 segments, 2nd run: 36m48s
-40 segment hosts, 8 segments, 1st run: 68m53s
-40 segment hosts, 8 segments, 2nd run: 33m59s
+| Segment Hosts | Segments | Run 1 | Run 2 |
+|:---:|:---:|---:|---:|
+|  2 | 2 |  7m  3s |  4m 52s |
+|  2 | 4 |  7m 48s |  4m 32s |
+|  4 | 2 |  8m 32s |  5m  1s |
+|  4 | 4 |  8m 39s |  4m 59s |
+| 10 | 2 | 15m 17s |  8m 16s |
+| 10 | 4 | 16m 27s |  8m  5s |
+| 10 | 6 | 17m 38s |  8m  7s |
+| 10 | 8 | 17m 10s |  8m  6s |
+| 20 | 2 | 27m 21s | 12m 23s |
+| 20 | 4 | 31m 50s | 16m 46s |
+| 20 | 6 | 29m 34s | 13m 12s |
+| 20 | 8 | 34m  2s | 15m 46s |
+| 40 | 2 | 62m 13s | 34m 21s |
+| 40 | 4 | 66m 42s | 38m 54s |
+| 40 | 6 | 65m 25s | 36m 48s |
+| 40 | 8 | 68m 53s | 33m 59s |
 
 ##### Increase forks parameter
 
 The following tests were run with an increased `forks` parameter, allowing for more parallel operations on the Ansible controller host (Apple M1 Max) while consuming more resources on the controller.
 
-40 segment hosts, 8 segments, forks=21 (running 20 segments in parallel, plus coordinator), 1st run: 71m22s
-40 segment hosts, 8 segments, forks=21 (running 20 segments in parallel, plus coordinator), 2nd run: 37m33s
+| Segment Hosts | Segments | Forks | Parallelism | Run 1 | Run 2 |
+|:---:|:---:|:---:|---|---:|---:|
+|40  |8| 21 | 20 segments + coordinator in parallel | 71m 22s | 37m 33s |
+|40  |8| 41 | 40 segments + coordinator in parallel | 72m 40s | 31m 11s |
 
-40 segment hosts, 8 segments, forks=41 (running 40 segments in parallel, plus coordinator), 1st run: 72m40s
-40 segment hosts, 8 segments, forks=41 (running 40 segments in parallel, plus coordinator), 2nd run: 31m11s
