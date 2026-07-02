@@ -450,17 +450,10 @@ This will apply the new setting only for this run of the playbook, making it saf
 
 ### AWS Instance Types
 
-Instance Type: m7a.medium
-1x vCPU, 4 GB RAM
-
-Instance Type: m7a.large
-2x vCPU, 8 GB RAM
-
-Instance Type: m7a.xlarge
-4x vCPU, 16 GB RAM
-
-Instance Type: m7a.2xlarge
-8x vCPU, 32 GB RAM
+- Instance Type: `m7a.medium`: `1x vCPU`, `4 GB RAM`
+- Instance Type: `m7a.large`: `2x vCPU`, `8 GB RAM`
+- Instance Type: `m7a.xlarge`: `4x vCPU`, `16 GB RAM`
+- Instance Type: `m7a.2xlarge`: `8x vCPU`, `32 GB RAM`
 
 ### Tests
 
@@ -535,7 +528,6 @@ In general, `m7a.medium` instances are too small to run 2 WarehousePG instances.
 | 40 | 2 | 50m 52s | 24m 22s |
 | 40 | 4 | 52m  8s | 21m 20s |
 
-
 #### m7a.2xlarge
 
 | Segment Hosts | Segments | Run 1 | Run 2 |
@@ -565,4 +557,3 @@ The following tests were run with an increased `forks` parameter, allowing for m
 |:---:|:---:|:---:|---|---:|---:|
 |40  |8| 21 | 20 segments + coordinator in parallel | 71m 22s | 37m 33s |
 |40  |8| 41 | 40 segments + coordinator in parallel | 72m 40s | 31m 11s |
-
