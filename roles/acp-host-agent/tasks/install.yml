@@ -1,0 +1,20 @@
+---
+
+- name: Map acp_agent_upgrade to dnf state
+  ansible.builtin.set_fact:
+    _acp_agent_dnf_state: >-
+      {{ 'latest' if acp_agent_upgrade == 'always-upgrade-to-latest-minor'
+         else ('absent' if acp_agent_upgrade == 'absent' else 'present') }}
+
+- name: Install acp-host-agent package
+  ansible.builtin.dnf:
+    name: "{{ acp_agent_package_name }}{{ '-' ~ acp_agent_version if acp_agent_version else '' }}"
+    state: "{{ _acp_agent_dnf_state }}"
+  become: true
+  become_user: root
+  timeout: "{{ DNF_TIMEOUT }}"
+  throttle: "{{ serial_operations }}"
+  register: _acp_agent_install
+  until: _acp_agent_install is succeeded
+  retries: 10
+  delay: 5

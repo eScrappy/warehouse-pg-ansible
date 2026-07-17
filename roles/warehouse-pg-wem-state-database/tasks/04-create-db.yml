@@ -1,0 +1,26 @@
+---
+
+# Reusable task: create a PostgreSQL database and grant all privileges to a role.
+# The role must already exist before calling this task (use create-role.yml first).
+#
+# Required vars:
+#   db_name  — database name to create
+#   db_user  — PostgreSQL role to grant privileges to
+#   db_port  — PostgreSQL port to connect to
+
+- name: "Create PostgreSQL database - {{ db_name }}"
+  community.postgresql.postgresql_db:
+    name: "{{ db_name }}"
+    owner: "{{ db_user }}"
+    login_port: "{{ db_port }}"
+    state: present
+  become_user: postgres
+
+- name: "Grant all privileges on database {{ db_name }} to {{ db_user }} user"
+  community.postgresql.postgresql_privs:
+    login_db: "{{ db_name }}"
+    login_port: "{{ db_port }}"
+    privs: ALL
+    type: database
+    role: "{{ db_user }}"
+  become_user: postgres

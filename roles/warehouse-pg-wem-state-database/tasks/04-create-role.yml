@@ -1,0 +1,17 @@
+---
+
+# Reusable task: create a PostgreSQL role with a password.
+#
+# Required vars:
+#   db_user      — PostgreSQL role name to create
+#   db_password  — password for the role
+#   db_port      — PostgreSQL port to connect to
+
+- name: "Create PostgreSQL user - {{ db_user }}"
+  community.postgresql.postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password if db_password | default('') | length > 0 else omit }}"
+    login_port: "{{ db_port }}"
+    state: present
+  no_log: true
+  become_user: postgres

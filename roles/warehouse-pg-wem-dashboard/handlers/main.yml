@@ -1,0 +1,10 @@
+---
+
+- name: Restart wem
+  ansible.builtin.systemd:
+    name: "{{ wem_service_name }}"
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: root
+  when: wem_service_started | bool

@@ -1,0 +1,9 @@
+---
+
+- name: Restart acp-host-agent
+  ansible.builtin.systemd:
+    name: "{{ acp_agent_service_name }}"
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: root

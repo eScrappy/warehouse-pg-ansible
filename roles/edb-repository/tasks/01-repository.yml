@@ -20,6 +20,7 @@
         dest: /root/edb_setup.rpm.sh
         mode: "0700"
         timeout: 300
+      no_log: true
       throttle: "{{ serial_operations }}"
       register: _edb_download
       until: _edb_download is succeeded

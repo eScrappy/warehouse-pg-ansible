@@ -1,0 +1,22 @@
+---
+
+- name: Check for Red Hat based OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "RedHat"
+    fail_msg: "This role only supports Red Hat based operating systems."
+
+- name: Check that role runs as root
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["user_uid"] == 0
+    fail_msg: "This role requires become: true — tasks must run as root."
+
+- name: Assert WEM state database user password is set when state DB is remote
+  ansible.builtin.assert:
+    that:
+      - wem_state_db_password | default('') | string | length > 0
+    fail_msg: >-
+      wem_state_db_password is empty but wem_state_db_host is '{{ wem_state_db_host }}'.
+      A password is required when the state database is not on localhost.
+  when: wem_state_db_host not in ['127.0.0.1', 'localhost']

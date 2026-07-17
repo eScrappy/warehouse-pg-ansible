@@ -1,0 +1,68 @@
+---
+
+- name: Enable PostgreSQL AppStream module
+  ansible.builtin.command:
+    cmd: "dnf module enable -y postgresql:{{ pg_version }}"
+  args:
+    creates: "/etc/dnf/modules.d/postgresql.module"
+
+- name: Install postgresql-server and contrib
+  ansible.builtin.dnf:
+    name:
+      - postgresql-server
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+
+- name: Check if PostgreSQL data directory is initialized
+  ansible.builtin.stat:
+    path: "{{ pg_data_dir }}/PG_VERSION"
+  register: _pg_initialized
+
+- name: Initialize PostgreSQL database cluster
+  ansible.builtin.command:
+    cmd: postgresql-setup --initdb
+  when: not _pg_initialized.stat.exists
+
+- name: Configure non-default PostgreSQL port
+  when: pg_port | int != 5432
+  block:
+    - name: Install policycoreutils-python-utils for SELinux port management
+      ansible.builtin.dnf:
+        name: policycoreutils-python-utils
+        state: present
+
+    - name: Check if port {{ pg_port }} is already registered in SELinux
+      ansible.builtin.command:
+        cmd: semanage port -l
+      register: _semanage_list
+      changed_when: false
+
+    - name: Allow PostgreSQL to bind to port {{ pg_port }} via SELinux
+      ansible.builtin.command:
+        cmd: semanage port -a -t postgresql_port_t -p tcp {{ pg_port }}
+      when: "'postgresql_port_t' not in _semanage_list.stdout or pg_port | string not in _semanage_list.stdout"
+      changed_when: true
+
+    - name: Set PostgreSQL port in postgresql.conf
+      ansible.builtin.lineinfile:
+        path: "{{ pg_data_dir }}/postgresql.conf"
+        regexp: "^#?\\s*port\\s*="
+        line: "port = {{ pg_port }}"
+        state: present
+      become_user: postgres
+
+- name: Create Ansible remote_tmp directory for postgres user
+  ansible.builtin.file:
+    path: /var/lib/pgsql/.ansible/tmp
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+- name: Enable and start PostgreSQL service
+  ansible.builtin.systemd:
+    name: "{{ pg_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true

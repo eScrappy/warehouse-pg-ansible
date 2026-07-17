@@ -1,0 +1,17 @@
+---
+
+- name: Check for Red Hat based OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "RedHat"
+    fail_msg: "This role only supports Red Hat based operating systems."
+
+# The acp-host-agent connects to Temporal and runs WHPG activity handlers,
+# so it is only installed on coordinator nodes.
+- name: Install acp-host-agent package
+  ansible.builtin.import_tasks: install.yml
+  when: whpg_role == "coordinator"
+
+- name: Configure acp-host-agent
+  ansible.builtin.import_tasks: configure.yml
+  when: whpg_role == "coordinator"

@@ -96,6 +96,7 @@
   ansible.builtin.shell:
     cmd: |
       source {{ greenplum_path }}
+      export COORDINATOR_DATA_DIRECTORY={{ _whpg_coordinator_directory.stdout | trim }}/{{ _whpg_seg_prefix_value.stdout | trim }}-1
       gpstop -a -u
     chdir: "{{ _whpg_user_info.home }}"
     executable: /bin/bash

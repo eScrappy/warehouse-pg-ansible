@@ -1,0 +1,47 @@
+---
+
+- name: Setup WEM state database and user
+  when: wem_state_db is defined and wem_state_db | length > 0
+  block:
+    - name: Create WEM state database user
+      ansible.builtin.include_tasks: 04-create-role.yml
+      vars:
+        db_user: "{{ wem_state_db_user }}"
+        db_password: "{{ wem_state_db_password }}"
+        db_port: "{{ wem_state_db_port }}"
+
+    - name: Create WEM state database
+      ansible.builtin.include_tasks: 04-create-db.yml
+      vars:
+        db_name: "{{ wem_state_db }}"
+        db_user: "{{ wem_state_db_user }}"
+        db_port: "{{ wem_state_db_port }}"
+
+    - name: Grant superuser privileges to WEM state database {{ wem_state_db_user }} user"
+      community.postgresql.postgresql_user:
+        name: "{{ wem_state_db_user }}"
+        role_attr_flags: SUPERUSER
+        login_port: "{{ wem_state_db_port }}"
+        state: present
+      become_user: postgres
+
+- name: Create Temporal database user
+  ansible.builtin.include_tasks: 04-create-role.yml
+  vars:
+    db_user: "{{ temporal_db_user }}"
+    db_password: "{{ temporal_db_password }}"
+    db_port: "{{ pg_port }}"
+
+- name: Create Temporal main database
+  ansible.builtin.include_tasks: 04-create-db.yml
+  vars:
+    db_name: "{{ temporal_db_name }}"
+    db_user: "{{ temporal_db_user }}"
+    db_port: "{{ pg_port }}"
+
+- name: Create Temporal visibility database
+  ansible.builtin.include_tasks: 04-create-db.yml
+  vars:
+    db_name: "{{ temporal_visibility_db_name }}"
+    db_user: "{{ temporal_db_user }}"
+    db_port: "{{ pg_port }}"

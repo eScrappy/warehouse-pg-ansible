@@ -23,9 +23,83 @@
 #        and $greenplum_path setting
 
 
+- name: Build dynamic wem_stack and monitoring_stack groups
+  hosts: whpg_clusters
+  gather_facts: false
+  any_errors_fatal: true
+  tags: always
+  tasks:
+    # wem_host / monitoring_host are cluster group vars — visible to whpg_clusters hosts.
+    # run_once: true ensures the task runs on a single host regardless of cluster size.
+    # add_host creates groups globally for all subsequent plays in the playbook run.
+    - name: Add wem_host to wem_stack group
+      ansible.builtin.add_host:
+        name: "{{ wem_host }}"
+        groups: wem_stack
+      when: wem_host is defined
+      run_once: true
+
+    - name: Add monitoring_host to monitoring_stack group
+      ansible.builtin.add_host:
+        name: "{{ monitoring_host }}"
+        groups: monitoring_stack
+      when: monitoring_host is defined
+      run_once: true
+
+
+# Runs when: wem_host is defined in inventory (e.g. inventory-with-monitoring.yml,
+#            inventory-with-standby-and-monitoring.yml, inventory-with-standby-as-monitoring.yml)
+#            or passed via -e wem_host=<hostname>.
+# Runs with tags: wem, warehouse-pg-wem-state-database, warehouse-pg-wem-workflow-manager,
+#                 warehouse-pg-wem-dashboard, update-pg-hba
+# Purpose: Fail fast on localhost with a clear error before touching any remote host,
+#          in case wem_host is set to an invalid or misspelled inventory hostname.
+- name: Validate wem_host
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tags: [wem, warehouse-pg-wem-state-database, warehouse-pg-wem-workflow-manager, warehouse-pg-wem-dashboard, update-pg-hba]
+  tasks:
+    - name: Validate wem_host points to a valid inventory host
+      ansible.builtin.assert:
+        that:
+          - wem_host in hostvars
+          - "'ip_address' in hostvars[wem_host]"
+        fail_msg: |
+          'wem_host' is not a valid inventory host.
+          Ensure the host is defined in your inventory file and pass it with: -e wem_host=<hostname>
+          Valid hostnames: {{ hostvars.keys() | list }}
+      when: wem_host is defined
+
+
+# Runs when: monitoring_host is defined in inventory (e.g. inventory-with-monitoring.yml,
+#            inventory-with-standby-and-monitoring.yml, inventory-with-standby-as-monitoring.yml)
+#            or passed via -e monitoring_host=<hostname>.
+# Runs with tags: warehouse-pg-observability, warehouse-pg-observability-collector
+# Purpose: Fail fast on localhost with a clear error before touching any remote host,
+#          in case monitoring_host is set to an invalid or misspelled inventory hostname.
+- name: Validate monitoring_host
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tags: [warehouse-pg-observability, warehouse-pg-observability-collector]
+  tasks:
+    - name: Validate monitoring_host points to a valid inventory host
+      ansible.builtin.assert:
+        that:
+          - monitoring_host in hostvars
+          - "'ip_address' in hostvars[monitoring_host]"
+        fail_msg: |
+          'monitoring_host' is not a valid inventory host.
+          Ensure the host is defined in your inventory file and pass it with: -e monitoring_host=<hostname>
+          Valid hostnames: {{ hostvars.keys() | list }}
+      when: monitoring_host is defined
+
+
 - name: Prepare all servers for database installation
   hosts: whpg_clusters
   become: true
+  tags: deploy
   any_errors_fatal: true
   tasks:
     # create the data directory on all hosts
@@ -42,6 +116,9 @@
   hosts: whpg_clusters
   become: true
   any_errors_fatal: true
+  tags: deploy
+  vars:
+    wem_host_ip: "{{ hostvars[wem_host].ip_address if wem_host is defined and wem_host in hostvars else '' }}"
   # Uncomment to override the shared defaults for this play:
   # vars:
   #   WHPG_UNIX_USER: "gpadmin"
@@ -64,6 +141,7 @@
   hosts: whpg_clusters
   become: true
   any_errors_fatal: false
+  tags: cluster-data
   # Uncomment to override the shared defaults for this play:
   # vars:
   #   WHPG_UNIX_USER: "gpadmin"
@@ -71,4 +149,154 @@
   #   greenplum_path: "/usr/local/greenplum-db/greenplum_path.sh"
   roles:
     - role: warehouse-pg-cluster-data
+
+
+- name: Deploy observability stack on monitoring instance
+  hosts: monitoring_stack
+  become: true
+  any_errors_fatal: true
+  tags: [warehouse-pg-observability]
+  roles:
+    - role: warehouse-pg-observability-prometheus
+    - role: warehouse-pg-observability-loki
+
+
+- name: Install PostgreSQL state database for WEM
+  hosts: wem_stack
+  become: true
+  any_errors_fatal: true
+  tags: [wem, warehouse-pg-wem-state-database]
+  pre_tasks:
+    - name: Read token from local file
+      set_fact:
+        edb_token: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-token') }}"
+        edb_repository: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-repository') }}"
+      run_once: true
+  roles:
+    - role: edb-repository
+    - role: warehouse-pg-wem-state-database
+
+
+- name: Install Temporal workflow service and Alertmanager for WEM
+  hosts: wem_stack
+  become: true
+  any_errors_fatal: true
+  tags: [wem, warehouse-pg-wem-workflow-manager]
+  roles:
+    - role: warehouse-pg-wem-workflow-manager
+    - role: warehouse-pg-observability-alertmanager
+
+
+# role. It can be replaced by any inventory group or single host — a dedicated
+# standalone management host, a WHPG coordinator, or a WHPG standby. The role
+# is assigned per-host and does not depend on `whpg_clusters` group membership.
+#
+# NOTE: When a host is targeted by both this play and one of the earlier
+# `whpg_clusters` plays (i.e. WEM is co-located on a coordinator or standby),
+# the `WHPG_UNIX_USER` and `WHPG_UNIX_GROUP` variables must hold the same
+# values in both plays. Both roles create / chown files for that user, and a
+# mismatch would leave the host with two different identities for the same
+# files. The simplest way to guarantee this is to set the variables once in
+# inventory / group_vars rather than per-play.
+- name: Install WarehousePG Enterprise Manager
+  hosts: wem_stack
+  become: true
+  any_errors_fatal: true
+  tags: [wem, warehouse-pg-wem-dashboard]
+  vars:
+    whpg_db_roles:
+      - name: "{{ whpg_user }}"
+        password: "{{ whpg_password }}"
+        superuser: true
+  pre_tasks:
+    - name: Read token from local file
+      set_fact:
+        edb_token: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-token') }}"
+        edb_repository: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-repository') }}"
+      run_once: true
+      tags: always
+
+    - name: Resolve coordinator
+      ansible.builtin.set_fact:
+        _wem_prep_coordinator: "{{ groups['whpg_clusters'] | map('extract', hostvars) | selectattr('whpg_role', 'equalto', 'coordinator') | map(attribute='inventory_hostname') | first }}"
+      tags: always
+
+    # wem_host / monitoring_host are group vars on the cluster group (e.g. cluster_test).
+    # Hosts outside that group (e.g. monitoring_instance) cannot see them directly,
+    # so we pull them from the coordinator's hostvars and set them as facts here.
+    # IPs are resolved in the same task to avoid an extra round-trip.
+    - name: Resolve WEM hosts and IP addresses
+      vars:
+        _coord:   "{{ hostvars[_wem_prep_coordinator] }}"
+        _monitoring_host_ip:  "{{ hostvars[_coord['monitoring_host']]['ip_address'] | default('localhost') }}"
+      ansible.builtin.set_fact:
+        whpg_host:         "{{ _coord['ip_address'] | default('localhost') }}"
+        wem_host_ip:       "{{ hostvars[_coord['wem_host']]['ip_address'] | default('localhost') }}"
+        loki_host:         "{{ _monitoring_host_ip }}"
+        prometheus_host:   "{{ _monitoring_host_ip }}"
+        alertmanager_host: "{{ _monitoring_host_ip }}"
+      tags: always
+
+    - name: Update WHPG db for whpg user used by WEM
+      block:
+        - name: Create database role for WEM dashboard
+          ansible.builtin.include_role:
+            name: warehouse-pg
+            tasks_from: 10-roles.yml
+
+        - name: Update pg_hba.conf for whpg_user used by WEM dashboard
+          ansible.builtin.include_role:
+            name: warehouse-pg
+            tasks_from: 11-update-pg-hba.yml
+      vars:
+        whpg_role: coordinator
+        cluster_name: "{{ hostvars[_wem_prep_coordinator]['cluster_name'] }}"
+      delegate_to: "{{ _wem_prep_coordinator }}"
+      tags: [wem, warehouse-pg-db-roles, update-pg-hba]
+  roles:
+    - role: edb-repository
+    - role: warehouse-pg-wem-dashboard
+
+
+- name: Deploy observability collector on all cluster nodes
+  hosts: "{{ 'whpg_clusters' if groups['monitoring_stack'] | default([]) | length > 0 else [] }}"
+  become: true
+  any_errors_fatal: true
+  tags: [warehouse-pg-observability-collector]
+  # Comment to override the shared defaults for this play:
+  vars:
+    _monitoring_ip: "{{ hostvars[monitoring_host]['ip_address'] if monitoring_host is defined and monitoring_host in hostvars and 'ip_address' in hostvars[monitoring_host] else 'localhost' }}"
+    loki_host: "{{ _monitoring_ip }}"
+    prometheus_host: "{{ _monitoring_ip }}"
+  pre_tasks:
+    - name: Read token from local file
+      set_fact:
+        edb_token: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-token') }}"
+        edb_repository: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-repository') }}"
+      run_once: true
+  roles:
+    - role: edb-repository
+    - role: warehouse-pg-observability-collector
+
+
+- name: Deploy ACP host agent on coordinator nodes
+  hosts: "{{ 'whpg_clusters' if groups['wem_stack'] | default([]) | length > 0 else [] }}"
+  become: true
+  any_errors_fatal: true
+  tags: [acp-host-agent]
+  vars:
+    temporal_host: "{{ hostvars[wem_host]['ip_address'] if wem_host is defined and wem_host in hostvars and 'ip_address' in hostvars[wem_host] else '127.0.0.1' }}"
+  pre_tasks:
+    - name: Skip non-coordinator hosts
+      ansible.builtin.meta: end_host
+      when: whpg_role != 'coordinator'
+
+    - name: Read token from local file
+      set_fact:
+        edb_token: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-token') }}"
+        edb_repository: "{{ lookup('file', lookup('env', 'HOME') ~ '/.edb-repository') }}"
+      run_once: true
+  roles:
+    - role: edb-repository
+    - role: acp-host-agent
 

@@ -12,6 +12,11 @@ whpg_seg_prefix: "default"
 whpg_seg_num: 2
 whpg_port: 5432
 whpg_seg_base_port: 6000
+
+# WHPG user for WEM dashboard to connect to the WarehousePG cluster.
+# Used by the pg_hba_monitoring_wem.conf template (11-update-pg-hba.yml),
+# which runs before the wem-dashboard role's own default would be loaded.
+whpg_user: "wem_user"
 # $whpg_upgrade can be "install-but-no-automatic-upgrades" or
 # "always-upgrade-to-latest-minor", whereas the mapping is:
 # "install-but-no-automatic-upgrades" -> RPM "present"
@@ -94,7 +99,9 @@ whpg_resource_management: "group-v2"
 whpg_resource_queues: []
 
 # wait no longer than this time in seconds for the RPM repository
-DNF_TIMEOUT: 120
+DNF_TIMEOUT: 300
+# Throttle concurrent installs to avoid hitting EDB repository retry limits
+serial_operations: 1
 
 # add maintenance jobs for old gpAdminLogs logfiles (coordinator and standby)
 whpg_remove_old_gpAdminLogs: false
@@ -131,3 +138,22 @@ whpg_expand_db_redistribute: true
 whpg_expand_db_run_analyze: true
 # automatically cleanup after expansion (only do this if you are sure the expansion works)
 whpg_expand_cleanup_after_complete: true
+
+# Database users to create or update on the coordinator.
+# Each entry is a hash with:
+#   name        (required) — role name
+#   password    (optional) — login password; omit for passwordless (trust/peer) roles
+#   superuser   (optional, default false) — SUPERUSER privilege
+#   createdb    (optional, default false) — CREATEDB privilege
+#   createrole  (optional, default false) — CREATEROLE privilege
+# Examples:
+#   whpg_db_roles:
+#     - name: wem_user
+#       password: "admin"
+#       superuser: true
+#     - name: reporting
+#       password: "r3port!"
+#     - name: etl_admin
+#       password: "etl123"
+#       createdb: true
+whpg_db_roles: []

@@ -1,0 +1,20 @@
+---
+
+- name: Create WHPG_UNIX_GROUP
+  ansible.builtin.group:
+    name: "{{ WHPG_UNIX_GROUP }}"
+    state: present
+  become: true
+  become_user: root
+
+- name: Create WHPG_UNIX_USER
+  ansible.builtin.user:
+    name: "{{ WHPG_UNIX_USER }}"
+    group: "{{ WHPG_UNIX_GROUP }}"
+    comment: "WarehousePG Database"
+    password: "!"
+    create_home: true
+    state: present
+  become: true
+  become_user: root
+  no_log: true

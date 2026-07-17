@@ -1,0 +1,108 @@
+---
+# Standalone task file: update pg_hba.conf on the coordinator.
+# Paths are discovered from the running cluster via psql — no dependency on
+# the gpinitsystem config file, so this works for externally-provisioned clusters too.
+#
+# Importable via:  import_role: name: warehouse-pg tasks_from: update-pg-hba.yml
+# Run via:         ansible-playbook playbook.yml --tags update-pg-hba
+
+- name: Discover pg_hba.conf path from running cluster
+  ansible.builtin.shell:
+    cmd: |
+      source {{ greenplum_path }}
+      psql -p {{ whpg_port }} -d postgres -tAc 'SHOW hba_file;'
+    executable: /bin/bash
+  become: "{{ ansible_facts['user_id'] != WHPG_UNIX_USER }}"
+  become_user: "{{ WHPG_UNIX_USER }}"
+  register: _whpg_hba_file
+  changed_when: false
+
+- name: Discover coordinator data directory from running cluster
+  ansible.builtin.shell:
+    cmd: |
+      source {{ greenplum_path }}
+      psql -p {{ whpg_port }} -d postgres -tAc 'SHOW data_directory;'
+    executable: /bin/bash
+  become: "{{ ansible_facts['user_id'] != WHPG_UNIX_USER }}"
+  become_user: "{{ WHPG_UNIX_USER }}"
+  register: _whpg_coordinator_data_dir
+  changed_when: false
+
+- name: Set pg_hba.conf and COORDINATOR_DATA_DIRECTORY facts
+  ansible.builtin.set_fact:
+    _whpg_coordinator_pg_hba_conf: "{{ _whpg_hba_file.stdout | trim }}"
+    _whpg_coordinator_data_directory: "{{ _whpg_coordinator_data_dir.stdout | trim }}"
+
+- name: Check for pg_hba_monitoring_wem.conf template
+  ansible.builtin.stat:
+    path: "{{ role_path }}/templates/pg_hba_monitoring_wem.conf"
+  delegate_to: localhost
+  become: false
+  register: _whpg_pg_hba_template_stat
+  changed_when: false
+  when: groups['wem_stack'] | default([]) | length > 0
+
+- name: Apply WEM monitoring pg_hba entries to coordinator pg_hba.conf
+  ansible.builtin.blockinfile:
+    path: "{{ _whpg_coordinator_pg_hba_conf }}"
+    block: "{{ lookup('template', 'pg_hba_monitoring_wem.conf') }}"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - pg_hba monitoring_wem"
+  become: "{{ ansible_facts['user_id'] != WHPG_UNIX_USER }}"
+  become_user: "{{ WHPG_UNIX_USER }}"
+  register: _whpg_pg_hba_block
+  when:
+    - groups['wem_stack'] | default([]) | length > 0
+    - _whpg_pg_hba_template_stat.stat.exists
+
+- name: Validate additional_pg_hba_conf entries
+  ansible.builtin.assert:
+    that:
+      - item.conntype is defined
+      - item.conntype in ['local', 'host', 'hostssl', 'hostnossl', 'hostgssenc', 'hostnogssenc']
+      - item.database is defined
+      - item.database | string | length > 0
+      - item.user is defined
+      - item.user | string | length > 0
+      - item.method is defined
+      - item.method | string | length > 0
+      - (item.address is not defined)
+        or (item.address | string | length == 0)
+        or (item.address | string is match('^[0-9a-fA-F.:]+/[0-9.]+$'))
+    fail_msg: "Invalid additional_pg_hba_conf entry: {{ item }}"
+  loop: "{{ additional_pg_hba_conf }}"
+  when:
+    - additional_pg_hba_conf is defined
+    - additional_pg_hba_conf is iterable
+    - additional_pg_hba_conf is not string
+    - additional_pg_hba_conf is not mapping
+    - additional_pg_hba_conf | length > 0
+
+- name: Apply additional_pg_hba_conf entries to coordinator pg_hba.conf
+  ansible.builtin.blockinfile:
+    path: "{{ _whpg_coordinator_pg_hba_conf | trim }}"
+    block: |-
+      {% for e in additional_pg_hba_conf -%}
+      {{ e.conntype }}    {{ e.database }}    {{ e.user }}{% if e.address is defined and (e.address | string | length) > 0 %}    {{ e.address }}{% endif %}    {{ e.method }}{% if e.options is defined and (e.options | string | length) > 0 %}    {{ e.options }}{% endif %}
+
+      {% endfor %}
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - additional_pg_hba_conf {{ cluster_name }}"
+  become: "{{ ansible_facts['user_id'] != WHPG_UNIX_USER }}"
+  become_user: "{{ WHPG_UNIX_USER }}"
+  register: _whpg_additional_pg_hba_block
+  when:
+    - additional_pg_hba_conf is defined
+    - additional_pg_hba_conf is iterable
+    - additional_pg_hba_conf is not string
+    - additional_pg_hba_conf is not mapping
+    - additional_pg_hba_conf | length > 0
+
+- name: Reload WarehouseDB to pick up pg_hba.conf changes
+  ansible.builtin.shell:
+    cmd: |
+      source {{ greenplum_path }}
+      export COORDINATOR_DATA_DIRECTORY={{ _whpg_coordinator_data_directory }}
+      gpstop -a -u
+    chdir: "/home/{{ WHPG_UNIX_USER }}"
+    executable: /bin/bash
+  become: "{{ ansible_facts['user_id'] != WHPG_UNIX_USER }}"
+  become_user: "{{ WHPG_UNIX_USER }}"

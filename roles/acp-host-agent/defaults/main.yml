@@ -1,0 +1,89 @@
+---
+
+# Package name from EDB repository
+acp_agent_package_name: "acp-host-agent"
+# Pin a specific RPM version (e.g. "1.2.3"). Leave empty to install whatever
+# version the configured EDB repository provides.
+acp_agent_version: ""
+# Accepted values:
+#   "install-but-no-automatic-upgrades" — install if missing, never auto-upgrade (default)
+#   "always-upgrade-to-latest-minor"    — upgrade to latest on every run
+#   "absent"                            — remove the package
+acp_agent_upgrade: "install-but-no-automatic-upgrades"
+
+DNF_TIMEOUT: 120
+# Throttle concurrent installs to avoid hitting EDB repository retry limits
+serial_operations: 1
+
+# Systemd service name (matches the name installed by the RPM)
+acp_agent_service_name: "acp-host-agent"
+
+# Config file path (EnvironmentFile sourced by acp-host-agent.service)
+acp_agent_config_file: "/etc/edb/acp-host-agent/acp-host-agent.conf"
+
+# =============================================================================
+# Temporal Server Connection (REQUIRED)
+# =============================================================================
+# Address of the Temporal frontend (host:port).
+# Defaults to localhost when Temporal is co-located on the same host.
+# Set temporal_host / temporal_frontend_grpc_port in inventory / group_vars
+# to point at the wem_stack host when Temporal runs on a different host.
+temporal_host: "localhost"
+temporal_frontend_grpc_port: 7233
+temporal_address: "{{ temporal_host }}:{{ temporal_frontend_grpc_port }}"
+
+acp_agent_temporal_address: "{{ temporal_address }}"
+# Temporal namespace to connect to (default in the RPM: wem)
+acp_agent_temporal_namespace: "wem"
+
+# Task queue this agent polls for activities (default in the RPM: remote-tasks)
+acp_agent_temporal_task_queue: "remote-tasks"
+
+# =============================================================================
+# Temporal Authentication (choose one; leave all empty for unauthenticated)
+# =============================================================================
+# Temporal Cloud: API key
+acp_agent_temporal_api_key: ""
+
+# mTLS: paths on the target host to the client certificate and private key
+acp_agent_temporal_tls_cert: ""
+acp_agent_temporal_tls_key: ""
+
+# mTLS: CA certificate to verify the server (self-hosted only)
+acp_agent_temporal_tls_server_ca_cert: ""
+
+# Override the server name used for TLS SNI (self-hosted only)
+acp_agent_temporal_tls_server_name: ""
+
+# =============================================================================
+# Agent Identity (optional)
+# =============================================================================
+# Stable per-host identifier. Leave empty to auto-derive from DMI UUID / MAC.
+acp_agent_id: ""
+
+# Directory where the Ed25519 enrollment keypair is stored.
+# Leave empty to keep the RPM default (/var/lib/edb/acp-host-agent).
+acp_agent_state_dir: ""
+
+# =============================================================================
+# WarehousePG Hub (optional — WHPG coordinator hosts only)
+# =============================================================================
+# Path to the WHPG installation. When set, the agent registers
+# whpg.cluster.* activity handlers. Leave empty on non-WHPG hosts.
+acp_agent_gphome: ""
+
+# WHPG port used to discover the coordinator's data directory via psql.
+whpg_port: 5432
+
+# Unix user that owns the WarehousePG installation.
+# Mirrors the warehouse-pg role default — override via inventory / group_vars
+# if you changed it there.
+WHPG_UNIX_USER: "gpadmin"
+greenplum_path: "/usr/local/greenplum-db/greenplum_path.sh"
+
+# =============================================================================
+# Logging
+# =============================================================================
+# Tracing filter: error | warn | info | debug | trace
+# Per-module syntax: info,host_agent=debug,temporalio_sdk=warn
+acp_agent_rust_log: "info"

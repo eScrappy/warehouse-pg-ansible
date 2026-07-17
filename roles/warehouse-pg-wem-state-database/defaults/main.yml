@@ -1,0 +1,34 @@
+---
+
+# PostgreSQL version to install (AppStream module stream)
+pg_version: "15"
+
+# Service name
+pg_service: "postgresql"
+
+# Data directory (set by initdb)
+pg_data_dir: "/var/lib/pgsql/data"
+
+# Port
+pg_port: 5433
+
+# WEM state database
+wem_state_db_host: "127.0.0.1"
+wem_state_db_port: "{{ pg_port }}"
+wem_state_db: "wem"
+wem_state_db_user: "wem_admin"
+# Use a password for the WEM state database user. Leave empty to use trust auth
+# (pg_hba.conf must allow it and postgres is installed locally).
+# Set via vault or -e for production.
+wem_state_db_password: ""
+
+# Temporal databases and user — must match temporal role defaults
+temporal_db_host: "127.0.0.1"
+temporal_db_port: "{{ pg_port }}"
+temporal_db_name: "temporal"
+temporal_visibility_db_name: "temporal_visibility"
+temporal_db_user: "temporal"
+# Use a password for the Temporal database user. Leave empty to use trust auth
+# (pg_hba.conf must allow it and postgres is installed locally).
+# Set via vault or -e for production.
+temporal_db_password: ""

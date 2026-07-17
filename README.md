@@ -52,82 +52,685 @@ Invoked as the last play of `playbook.yml`, or on its own via `ansible-playbook 
 
 > **Note:** This role is **not idempotent**. It rewrites both `cluster_state_<cluster_name>.{txt,json}` files on every run; the `scanned_at` timestamp changes each time, and any drift in the cluster state will surface in the file contents. Expect every Ansible run to report this role as `changed`.
 
-## Inventory Example
+### warehouse-pg-wem-dashboard
 
-```yaml
-whpg_clusters:
-  children:
-    # --- Single-node cluster ---
-    cluster_alpha:
-      vars:
-        cluster_name: "alpha"
-        whpg_data_directory: "/data/whpg"
-        whpg_cluster_name: "alpha"
-      hosts:
-        node-single:
-          whpg_role: coordinator
+Installs the WarehousePG Enterprise Manager (WEM) on the host defined by `wem_host` — a monitoring and administration dashboard for WarehousePG. The role installs the `whpg-enterprise-manager` RPM, edits the RPM-shipped `/etc/wem/wem.conf` in place (preserving the shipped commented examples and any RPM-generated secrets), and enables the `wem` systemd service. Default user/password for WEM is admin/admin and 
+should be accesseible at http://<wem_host_ip>:8080/ prvoided filewall and security group settings are modifed
+correctly.
 
-    # --- Multi-node cluster with standby ---
-    cluster_beta:
-      vars:
-        cluster_name: "beta"
-        whpg_data_directory: "/data/whpg"
-        whpg_cluster_name: "beta"
-      hosts:
-        node-x72j:
-          whpg_role: coordinator
-        node-a91p:
-          whpg_role: standby
-        node-z110:
-          whpg_role: segment
-        node-q442:
-          whpg_role: segment
-        node-r993:
-          whpg_role: segment
+See [roles/warehouse-pg-wem-dashboard/README.md](roles/warehouse-pg-wem-dashboard/README.md) for variables, prerequisites, and details.
 
-    # --- Two-node cluster ---
-    cluster_gamma:
-      vars:
-        cluster_name: "gamma"
-        whpg_data_directory: "/data/whpg"
-        whpg_cluster_name: "gamma"
-      hosts:
-        srv-prod-01:
-          whpg_role: coordinator
-        srv-prod-02:
-          whpg_role: segment
+
+### warehouse-pg-wem-state-database
+
+Installs PostgreSQL 15 on the host defined by `wem_host` via the DNF AppStream module. After installation, the role creates the WEM state database and user (`wem_admin`), the Temporal user and databases (`temporal`, `temporal_visibility`) required by `warehouse-pg-wem-workflow-manager`, and updates `pg_hba.conf` to allow passwordless trust auth for local connections. This role must run before `warehouse-pg-wem-workflow-manager`.
+
+See [roles/warehouse-pg-wem-state-database/README.md](roles/warehouse-pg-wem-state-database/README.md) for variables and details.
+
+### warehouse-pg-wem-workflow-manager
+
+Installs the Temporal.io workflow service on the host defined by `wem_host`. WEM uses Temporal for background job scheduling and durable workflow execution.
+
+See [roles/warehouse-pg-wem-workflow-manager/README.md](roles/warehouse-pg-wem-workflow-manager/README.md) for variables and details.
+
+### warehouse-pg-observability-prometheus
+
+Downloads and installs a Prometheus binary from GitHub releases. Configures scrape jobs for Prometheus self-monitoring and WEM metrics, with remote-write-receiver enabled.
+
+See [roles/warehouse-pg-observability-prometheus/README.md](roles/warehouse-pg-observability-prometheus/README.md) for variables and details.
+
+### warehouse-pg-observability-loki
+
+Downloads and installs a Loki binary from GitHub releases. Runs in single-binary filesystem mode for log aggregation.
+
+See [roles/warehouse-pg-observability-loki/README.md](roles/warehouse-pg-observability-loki/README.md) for variables and details.
+
+### warehouse-pg-observability-alertmanager
+
+Downloads and installs an Alertmanager binary from GitHub releases with a minimal default-receiver configuration.
+
+See [roles/warehouse-pg-observability-alertmanager/README.md](roles/warehouse-pg-observability-alertmanager/README.md) for variables and details.
+
+### warehouse-pg-observability-collector
+
+Installs the `edb-whpg-observability-collector` package on all cluster nodes and enables Grafana Alloy. On the coordinator only, configures the collector and runs the `deploy-observability` script.
+
+See [roles/warehouse-pg-observability-collector/README.md](roles/warehouse-pg-observability-collector/README.md) for variables and details.
+
+### acp-host-agent
+
+Installs the `acp-host-agent` RPM on coordinator nodes only. Connects to `warehouse-pg-wem-workflow-manager` (Temporal) and registers `whpg.cluster.*` activity handlers for WEM remote cluster management.
+
+See [roles/acp-host-agent/README.md](roles/acp-host-agent/README.md) for variables and details.
+
+---
+
+
+## Deployment Configuration (group_vars)
+
+Ansible automatically loads variables from `group_vars/` based on group membership. This is the primary place to configure shared settings across roles without repeating them in every inventory file. Role `defaults/` serve as fallback values — `group_vars` overrides them for actual deployments.
+
+```
+group_vars/
+  whpg_clusters/
+    vars.yml           # variables for cluster node specific deployment (observability collector, ACP host agent)
+  wem_stack/
+    vars.yml           # variables for WEM stack hosts (PostgreSQL, Temporal, WEM dashboard)
+  monitoring_stack/    # [optional] create to override Prometheus/Loki/Alertmanager settings
+    vars.yml
 ```
 
-All clusters are defined as children of `whpg_clusters`. Each host has a `whpg_role` variable set to one of: `coordinator`, `standby`, or `segment`.
+> **Note on dynamic groups:** `wem_stack` and `monitoring_stack` are built at runtime by the `add_host` pre-play. Ansible still loads `group_vars/wem_stack/` and `group_vars/monitoring_stack/` correctly for these dynamic groups because `group_vars` are resolved relative to the playbook directory at play execution time — by which point the host is already in the group.
 
-A so-called "single node" installation only uses a server with `whpg_clusters=coordinator`, and no segment servers. The role will figure out that this is a single node installation, and adapt the configuration accordingly.
+### All hosts (`group_vars/all/vars.yml`)
+
+Variables here apply to every host regardless of group — `whpg_clusters`, `wem_stack`, and `monitoring_stack`. Use this for variables that are shared between the cluster plays (which create the DB role) and the WEM plays (which connect to it).
+
+### WEM stack hosts (`group_vars/wem_stack/vars.yml`)
+
+Variables here apply only to hosts in the `wem_stack` group. The `wem_stack` group is built dynamically by the pre-play from the `wem_host` variable — set per-cluster in inventory (see [Inventory Examples](#inventory-examples)) or overridden at runtime with `-e wem_host=<host>`. This covers all three WEM components: warehouse-pg-wem-state-database, warehouse-pg-wem-workflow-manager, and WEM dashboard.
+
+To use external observability services instead of the local defaults, override `loki_host`, `prometheus_host`, or `alertmanager_host` here or via `-e`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `pg_port` | `5433` | warehouse-pg-wem-state-database port for WEM state database |
+| `whpg_user` | `wem_user` | WarehousePG database user created for WEM |
+| `whpg_password` | _(set it using group_vars/wem_stack/vars.yml)_ | Password for `whpg_user` |
+| `whpg_port` | `5432` | WarehousePG coordinator port. |
+| `wem_state_db` | `wem` | WEM state database name |
+| `wem_state_db_host` | `127.0.0.1` | WEM state database host |
+| `wem_state_db_port` | `{{ pg_port }}` | WEM state database port |
+| `wem_state_db_user` | `wem_admin` | WEM state database user |
+| `wem_state_db_password` | _(empty)_ | WEM state database password. Leave empty to use trust auth (pg_hba.conf allows local connections without password). |
+| `wem_port` | `8080` | Port the WEM web interface listens on. |
+| `wem_admin_password` | `admin` | Initial admin password. User need to reset on first login. |
+| `temporal_db_host` | `127.0.0.1` | warehouse-pg-wem-workflow-manager PostgreSQL host. Use explicit IPv4 to avoid `localhost` resolving to `::1`. |
+| `temporal_db_name` | `temporal` | warehouse-pg-wem-workflow-manager main database name |
+| `temporal_visibility_db_name` | `temporal_visibility` | Temporal visibility database name |
+| `temporal_db_user` | `temporal` | warehouse-pg-wem-workflow-manager database user |
+| `temporal_db_password` | _(empty)_ | warehouse-pg-wem-workflow-manager database password. Leave empty to use trust auth (pg_hba.conf allows local connections without password). |
+| `temporal_db_port` | `{{ pg_port }}` | warehouse-pg-wem-workflow-manager database port |
+| `temporal_address` | `localhost:7233` | warehouse-pg-wem-workflow-manager frontend address WEM connects to |
+| `wem_prometheus_url` | `http://localhost:9090` | Prometheus URL for WEM dashboard |
+| `wem_loki_url` | `http://localhost:3100` | Loki URL for WEM dashboard |
+| `wem_alertmanager_url` | `http://localhost:9093` | Alertmanager URL for WEM dashboard |
+
+To override observability endpoints (e.g. external Prometheus/Loki), set `loki_host`, `prometheus_host`, `alertmanager_host` in `group_vars/wem_stack/vars.yml` or pass via `-e`.
+
+<details>
+<summary>Full example: <code>group_vars/wem_stack/vars.yml</code></summary>
+
+```yaml
+---
+
+# =============================================================================
+# Shared configuration for the wem_stack group
+# Applies to all hosts in wem_stack (wem-state-database, wem-workflow-manager, wem-dashboard).
+# Role defaults serve as fallback — these values override them for deployments.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PostgreSQL state database settings (warehouse-pg-wem-state-database)
+# -----------------------------------------------------------------------------
+pg_port: 5433
+pg_db: "postgres"
+
+# -----------------------------------------------------------------------------
+# Temporal databases and user (warehouse-pg-wem-workflow-manager)
+# -----------------------------------------------------------------------------
+temporal_db_host: "127.0.0.1"
+temporal_db_port: "{{ pg_port }}"
+temporal_db_user: "temporal"
+temporal_db_name: "temporal"
+temporal_visibility_db_name: "temporal_visibility"
+temporal_default_namespace: "wem"
+# Leave empty to use trust auth (pg_hba.conf must allow it and postgres is installed locally)
+# temporal_db_password: ""
+
+# -----------------------------------------------------------------------------
+# WEM dashboard (warehouse-pg-wem-dashboard)
+# -----------------------------------------------------------------------------
+# Port the WEM web interface listens on. Leave it commented to use the default 8080.
+# wem_port: 8080
+# Initial password for the WEM web interface for user 'admin'. Leave it commented to
+# have the role auto-generate a password on first run.
+wem_admin_password: "admin"
+#
+# -------------------------------------------------------------
+# WHPG Database connection settings for WEM dashboard.
+# -------------------------------------------------------------
+# If coordinator is in inventory, its IP is used automatically as whpg_host. 
+# If not, whpg_host from here will be usedor -e whpg_host= is used.
+whpg_host: "localhost"
+
+# WHPG user for WEM dashboard to connect to the WarehousePG cluster.
+# This user must exist in the WarehousePG cluster and have super user privileges.
+whpg_user: "wem_user"
+
+# WHPG password for WEM dashboard to connect to the WarehousePG cluster.
+# Must be set by the operator — no built-in default.
+whpg_password: ""
+
+# WHPG port for WEM dashboard to connect to the WarehousePG cluster.
+whpg_port: 5432
+
+# WHPG database for WEM dashboard to connect to the WarehousePG cluster.
+# The database should be accesible for whpg_user metioned above.
+# If not provided/commented, the WEM dashboard will attempt to connect to the 
+# the default postgres database on the WarehousePG cluster and create wem database.
+# whpg_database: "wem"
+
+# Optional existing separate monitoring database for WEM to monitor
+# the WarehousePG cluster. If not provided/commented, the WEM dashboard 
+# will reuse whpg_database for monitoring.
+# whpg_monitoring_db: "wem_monitoring"
+
+# -------------------------------------------------------------
+# WEM state database connection settings for WEM dashboard
+# -------------------------------------------------------------
+# Postgresql database connection settings for WEM dashboard to connect to the WEM state database.
+wem_state_db_host: "127.0.0.1"
+wem_state_db_port: "{{ pg_port }}"
+wem_state_db_user: "wem_admin"
+# Leave empty to use trust auth (pg_hba.conf must allow it and postgres is installed locally)
+# wem_state_db_password: ""
+# Optional existing WEM state database for WEM dashboard to connect to.
+# If not provided/commented, the WEM dashboard will attempt to connect to the
+# the default postgres database on the WarehousePG cluster and create wem database.
+# wem_state_db: "wem"
+
+# -------------------------------------------------------------
+# Workflow manager settings for WEM dashboard
+# -------------------------------------------------------------
+temporal_address: "localhost:7233"
+
+# -------------------------------------------------------------
+# Storage and monitoring settings for WEM dashboard
+# -------------------------------------------------------------
+alertmanager_host: "localhost"
+alertmanager_port: 9093
+loki_host: "localhost"
+loki_port: 3100
+prometheus_host: "localhost"
+prometheus_port: 9090
+
+wem_alertmanager_url: "http://{{ alertmanager_host }}:{{ alertmanager_port }}"
+wem_loki_url: "http://{{ loki_host }}:{{ loki_port }}"
+wem_prometheus_url: "http://{{ prometheus_host }}:{{ prometheus_port }}"
+```
+
+</details>
+
+### Cluster nodes (`group_vars/whpg_clusters/vars.yml`)
+
+Variables here apply to all hosts in the `whpg_clusters` group — coordinator and segment nodes. This covers the observability collector and ACP host agent, which are deployed on every cluster node.
+
+The playbook derives `loki_host`, `prometheus_host`, and `temporal_host` from `monitoring_host` and `wem_host` set in the inventory `cluster_test/vars` section. Override for a single run with `-e monitoring_host=<host>` or `-e wem_host=<host>`. If neither is set, the defaults below apply (`localhost`).
+
+| Variable | Default | Description |
+|---|---|---|
+| `loki_host` | `localhost` | Host where Loki is running |
+| `loki_port` | `3100` | Loki port |
+| `loki_endpoint` | `http://{{ loki_host }}:{{ loki_port }}/loki/api/v1/push` | Full Loki push endpoint for the collector |
+| `prometheus_host` | `localhost` | Host where Prometheus is running |
+| `prometheus_port` | `9090` | Prometheus port |
+| `prometheus_endpoint` | `http://{{ prometheus_host }}:{{ prometheus_port }}/api/v1/write` | Full Prometheus remote-write endpoint for the collector |
+| `temporal_host` | `localhost` | Host where Temporal is running |
+| `temporal_frontend_grpc_port` | `7233` | Temporal frontend gRPC port |
+| `temporal_address` | `{{ temporal_host }}:{{ temporal_frontend_grpc_port }}` | Temporal address for the ACP host agent |
+
+To point the collector at an external monitoring stack, override `loki_host` and `prometheus_host` in `group_vars/whpg_clusters/vars.yml` or pass via `-e`.
+
+<details>
+<summary>Full example: <code>group_vars/whpg_clusters/vars.yml</code></summary>
+
+```yaml
+---
+
+# =============================================================================
+# Shared configuration for node-level agents (collector + acp-host-agent)
+# Applies to all hosts in whpg_clusters.
+# =============================================================================
+
+greenplum_path: "/usr/local/greenplum-db/greenplum_path.sh"
+
+# -----------------------------------------------------------------------------
+# Observability collector (warehouse-pg-observability-collector)
+# -----------------------------------------------------------------------------
+# Loki and Prometheus endpoint to push logs and metrics.
+loki_host: "localhost"
+loki_port: 3100
+prometheus_host: "localhost"
+prometheus_port: 9090
+
+loki_endpoint: "http://{{ loki_host }}:{{ loki_port }}/loki/api/v1/push"
+prometheus_endpoint: "http://{{ prometheus_host }}:{{ prometheus_port }}/api/v1/write"
+
+# -----------------------------------------------------------------------------
+# ACP host agent (acp-host-agent)
+# -----------------------------------------------------------------------------
+# IP of the host running Temporal. Derived from wem_host if passed via -e;
+# falls back to 127.0.0.1. Override with -e acp_temporal_host=<ip> to point
+# at a Temporal instance running elsewhere.
+temporal_host : "localhost"
+temporal_frontend_grpc_port: 7233
+temporal_address: "{{ temporal_host }}:{{ temporal_frontend_grpc_port }}"
+
+# Data directory for the WarehousePG cluster.
+WHPG_DATA_DIR: " {{ whpg_data_dir | default('/whpgdata') }}"
+```
+
+</details>
+
+---
+
+## Inventory Examples
+
+Five inventory files are generated automatically by Terraform (`Testing/main.tf`). Choose the one that matches your deployment topology.
+
+| File | Nodes | `wem_host` / `monitoring_host` | What installs automatically (no `--tags`) |
+|---|---|---|---|
+| `inventory.yml` | coordinator + segments | not set | WarehousePG cluster only |
+| `inventory-with-standby.yml` | coordinator + standby + segments | not set | WarehousePG cluster only |
+| `inventory-with-monitoring.yml` | coordinator + segments + monitoring_instance | `monitoring_instance` | WarehousePG cluster + Observability stack + WEM stack + Observability collector + ACP host agent |
+| `inventory-with-standby-and-monitoring.yml` | coordinator + standby + segments + monitoring_instance | `monitoring_instance` | WarehousePG cluster (with standby) + Observability stack + WEM stack + Observability collector + ACP host agent |
+| `inventory-with-standby-as-monitoring.yml` | coordinator + standby + segments | `standby` | WarehousePG cluster (with standby) + Observability stack + WEM stack on standby + Observability collector + ACP host agent |
+
+`wem_host` and `monitoring_host` are set per-cluster in `cluster_test/vars` (not at `all/vars` level). They can be overridden per-run with `-e wem_host=<host>` or `-e monitoring_host=<host>`.
+
+All clusters are defined as children of `whpg_clusters`. Each host must have:
+- `whpg_role`: one of `coordinator`, `standby`, or `segment`
+- `ip_address`: private IP used to derive observability/WEM endpoint URLs at play-level
+
+`wem_stack` and `monitoring_stack` groups are built dynamically by the playbook pre-play from `wem_host` and `monitoring_host`. No need to define them in inventory. Inventories with a **dedicated external monitoring host** (one that is not already in `whpg_clusters`) define a static `whpg_clusters_monitoring` group so that `hostvars` is populated for that host. When the standby doubles as the monitoring host it is already in `whpg_clusters` with full connection details — no extra group is needed.
+
+### inventory.yml — cluster only
+
+No `wem_host` or `monitoring_host` set. Pass them via `-e` to deploy WEM or observability.
+
+<details>
+<summary>Show example</summary>
+
+```yaml
+all:
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -J <jumphost>"
+  children:
+    whpg_clusters:
+      children:
+        cluster_test:
+          vars:
+            cluster_name: test
+            whpg_cluster_name: test
+            whpg_data_directory: /data/whpg
+            ansible_python_interpreter: /usr/bin/python3
+            whpg_host: <coordinator-private-ip>
+          hosts:
+            coordinator:
+              ansible_host: <coordinator-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: coordinator
+              ip_address: <coordinator-private-ip>
+              hostname: coordinator
+            seg1:
+              ansible_host: <seg1-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: segment
+              ip_address: <seg1-private-ip>
+              hostname: seg1
+```
+
+</details>
+
+### inventory-with-standby.yml — cluster with standby
+
+No `wem_host` or `monitoring_host` set. Pass them via `-e` to deploy WEM or observability.
+
+<details>
+<summary>Show example</summary>
+
+```yaml
+all:
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -J <jumphost>"
+  children:
+    whpg_clusters:
+      children:
+        cluster_test:
+          vars:
+            cluster_name: test
+            whpg_cluster_name: test
+            whpg_data_directory: /data/whpg
+            ansible_python_interpreter: /usr/bin/python3
+            whpg_host: <coordinator-private-ip>
+          hosts:
+            coordinator:
+              ansible_host: <coordinator-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: coordinator
+              ip_address: <coordinator-private-ip>
+              hostname: coordinator
+            standby:
+              ansible_host: <standby-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: standby
+              ip_address: <standby-private-ip>
+              hostname: standby
+            seg1:
+              ansible_host: <seg1-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: segment
+              ip_address: <seg1-private-ip>
+              hostname: seg1
+```
+
+</details>
+
+### inventory-with-monitoring.yml — dedicated monitoring node
+
+`wem_host` and `monitoring_host` are set to `monitoring_instance` in `cluster_test/vars`. A static `monitoring_hosts` group defines the host so `hostvars` is populated.
+
+<details>
+<summary>Show example</summary>
+
+```yaml
+all:
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -J <jumphost>"
+  children:
+    whpg_clusters:
+      children:
+        cluster_test:
+          vars:
+            cluster_name: test
+            whpg_cluster_name: test
+            whpg_data_directory: /data/whpg
+            ansible_python_interpreter: /usr/bin/python3
+            whpg_host: <coordinator-private-ip>
+            wem_host: monitoring_instance
+            monitoring_host: monitoring_instance
+          hosts:
+            coordinator:
+              ansible_host: <coordinator-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: coordinator
+              ip_address: <coordinator-private-ip>
+              hostname: coordinator
+            seg1:
+              ansible_host: <seg1-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: segment
+              ip_address: <seg1-private-ip>
+              hostname: seg1
+    monitoring_hosts:
+      hosts:
+        monitoring_instance:
+          ansible_host: <monitoring-public-ip>
+          ansible_user: rocky
+          ansible_ssh_private_key_file: /path/to/key.pem
+          ip_address: <monitoring-private-ip>
+          hostname: monitoring
+```
+
+</details>
+
+### inventory-with-standby-and-monitoring.yml — standby + dedicated monitoring node
+
+<details>
+<summary>Show example</summary>
+
+```yaml
+all:
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -J <jumphost>"
+  children:
+    whpg_clusters:
+      children:
+        cluster_test:
+          vars:
+            cluster_name: test
+            whpg_cluster_name: test
+            whpg_data_directory: /data/whpg
+            ansible_python_interpreter: /usr/bin/python3
+            whpg_host: <coordinator-private-ip>
+            wem_host: monitoring_instance
+            monitoring_host: monitoring_instance
+          hosts:
+            coordinator:
+              ansible_host: <coordinator-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: coordinator
+              ip_address: <coordinator-private-ip>
+              hostname: coordinator
+            standby:
+              ansible_host: <standby-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: standby
+              ip_address: <standby-private-ip>
+              hostname: standby
+            seg1:
+              ansible_host: <seg1-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: segment
+              ip_address: <seg1-private-ip>
+              hostname: seg1
+    monitoring_hosts:
+      hosts:
+        monitoring_instance:
+          ansible_host: <monitoring-public-ip>
+          ansible_user: rocky
+          ansible_ssh_private_key_file: /path/to/key.pem
+          ip_address: <monitoring-private-ip>
+          hostname: monitoring
+```
+
+</details>
+
+### inventory-with-standby-as-monitoring.yml — standby doubles as WEM/monitoring host
+
+The standby is already in `whpg_clusters` with full connection details. `wem_host` and `monitoring_host` point to `standby` in the cluster group vars — no separate monitoring group is needed.
+
+<details>
+<summary>Show example</summary>
+
+```yaml
+all:
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -J <jumphost>"
+  children:
+    whpg_clusters:
+      children:
+        cluster_test:
+          vars:
+            cluster_name: test
+            whpg_cluster_name: test
+            whpg_data_directory: /data/whpg
+            ansible_python_interpreter: /usr/bin/python3
+            whpg_host: <coordinator-private-ip>
+            wem_host: standby
+            monitoring_host: standby
+          hosts:
+            coordinator:
+              ansible_host: <coordinator-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: coordinator
+              ip_address: <coordinator-private-ip>
+              hostname: coordinator
+            standby:
+              ansible_host: <standby-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: standby
+              ip_address: <standby-private-ip>
+              hostname: standby
+            seg1:
+              ansible_host: <seg1-public-ip>
+              ansible_user: rocky
+              ansible_ssh_private_key_file: /path/to/key.pem
+              whpg_role: segment
+              ip_address: <seg1-private-ip>
+              hostname: seg1
+```
+
+</details>
+
+---
 
 ## Usage
 
-Create an Ansible inventory which defines the roles for each server. See the example `Inventory` section earlier in this document.
+Create an Ansible inventory which defines the roles for each server. See the `Inventory Example` section earlier in this document.
 
-Create a Playbook which applies the roles on the servers. Example:
+### Playbook tags
 
-```
+The playbook uses tags to allow selective deployment of different parts of the stack:
+
+| Tag | Hosts | Requires | What runs |
+|---|---|---|---|
+| `deploy` | `whpg_clusters` | Any inventory | Full cluster deployment: OS prep, packages, cluster init, pg_hba, standby, resource management |
+| `cluster-data` | `whpg_clusters` | Any inventory | Snapshot cluster state to `cluster_state_<name>.{txt,json}` |
+| `update-pg-hba` | `wem_stack` (delegates to coordinator) | Inventory with `wem_host` | Update `pg_hba.conf` on coordinator without a full deploy. Discovers paths via `psql`. |
+| `warehouse-pg-observability` | `monitoring_stack` (built from `monitoring_host`) | Inventory with `monitoring_host` | Deploy Prometheus, Loki, and Alertmanager |
+| `wem` | `wem_stack` (built from `wem_host`) | Inventory with `wem_host` | Deploy all WEM components: PostgreSQL, Temporal, and WEM dashboard |
+| `warehouse-pg-wem-state-database` | `wem_stack` (built from `wem_host`) | Inventory with `wem_host` | Install PostgreSQL state database only |
+| `warehouse-pg-wem-workflow-manager` | `wem_stack` (built from `wem_host`) | Inventory with `wem_host` | Install Temporal.io workflow service only |
+| `warehouse-pg-wem-dashboard` | `wem_stack` (built from `wem_host`) | Inventory with `wem_host` | Install WEM dashboard only |
+| `warehouse-pg-observability-collector` | `whpg_clusters` | Inventory with `monitoring_host` | Install observability collector and Grafana Alloy on all cluster nodes |
+| `acp-host-agent` | `whpg_clusters` (coordinator only) | Inventory with `wem_host` | Install ACP host agent on coordinator |
+
+### Examples
+
+#### Full stack deployment (no `--tags`)
+
+Run without tags — what deploys depends entirely on the inventory file. WEM and observability are deployed automatically when `wem_host`/`monitoring_host` are set in the inventory.
+
+> **Note:** This also runs the `cluster-data` play on every execution, which is not idempotent (rewrites snapshot files each time). For repeated runs, prefer the explicit-tags approach in [Section 4](#section-4-all-at-once).
+
+| Inventory | Command | What deploys |
+|---|---|---|
+| `inventory.yml` | `ansible-playbook -i inventory.yml playbook.yml` | WarehousePG cluster (coordinator + segments) |
+| `inventory-with-standby.yml` | `ansible-playbook -i inventory-with-standby.yml playbook.yml` | WarehousePG cluster (coordinator + standby + segments) |
+| `inventory-with-monitoring.yml` | `ansible-playbook -i inventory-with-monitoring.yml playbook.yml` | WarehousePG cluster + Observability stack, WEM stack (on monitoring_instance) + Collector + ACP host agent on all cluster nodes |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.yml playbook.yml` | WarehousePG cluster (with standby) + Observability stack, WEM stack (on monitoring_instance) + Collector + ACP host agent on all cluster nodes |
+| `inventory-with-standby-as-monitoring.yml` | `ansible-playbook -i inventory-with-standby-as-monitoring.yml playbook.yml` | WarehousePG cluster (with standby) + Observability stack, WEM (on standby) + Collector + ACP host agent on all cluster nodes |
+
 ---
 
-- name: Deploy WarehousePG on all clusters
-  hosts: whpg_clusters
-  become: true
-  roles:
-    - role: edb-repository
-    - role: warehouse-pg
+#### Selective deployment (`--tags`)
+
+##### Section 1: Cluster deployment
+
+| Inventory | Command | What deploys |
+|---|---|---|
+| `inventory.yml` | `ansible-playbook -i inventory.yml playbook.yml --tags deploy` | WarehousePG cluster |
+| `inventory.yml` | `ansible-playbook -i inventory.yml playbook.yml --tags cluster-data` | Snapshot cluster state only |
+| `inventory-with-standby.yml` | `ansible-playbook -i inventory-with-standby.yml playbook.yml --tags deploy` | WarehousePG cluster |
+
+All tags above work with any inventory that has `whpg_clusters` hosts defined — replace `-i` accordingly.
+
+---
+
+##### Section 2: WEM + Observability stack
+
+Use an inventory that has `wem_host` and/or `monitoring_host` set in `cluster_test/vars`.
+
+| Inventory | Command | What deploys |
+|---|---|---|
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.yml playbook.yml --tags "wem,warehouse-pg-observability"` | WEM stack + observability stack |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.yml playbook.yml --tags wem` | PostgreSQL + Temporal + WEM dashboard |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.ymlplaybook.yml --tags warehouse-pg-observability` | Prometheus + Loki + Alertmanager |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.ymlplaybook.yml --tags warehouse-pg-wem-state-database` | PostgreSQL state DB only |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.ymlplaybook.yml --tags warehouse-pg-wem-workflow-manager` | Temporal only |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.ymlplaybook.yml --tags warehouse-pg-wem-dashboard` | WEM dashboard only |
+
+The tags in the table above work with any inventory that has `wem_host`/`monitoring_host` set — replace `-i` accordingly.
+
+---
+
+##### Section 3: Observability collector and ACP host agent
+
+These run on `whpg_clusters` hosts. The collector is only deployed when `monitoring_stack` group is non-empty; the ACP agent only when `wem_stack` is non-empty. Both conditions are satisfied automatically when `monitoring_host`/`wem_host` are set in inventory.
+
+| Inventory | Command | What deploys |
+|---|---|---|
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.yml playbook.yml --tags "warehouse-pg-observability-collector,acp-host-agent"` | Collector + ACP host agent on all cluster nodes |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.yml playbook.yml --tags warehouse-pg-observability-collector` | Observability collector only |
+| `inventory-with-standby-and-monitoring.yml` | `ansible-playbook -i inventory-with-standby-and-monitoring.yml  playbook.yml --tags acp-host-agent` | ACP host agent only on coordinator |
+
+---
+
+#### Upgrade
+
+**RPM-based components** (WEM, collector, ACP host agent, WarehousePG): set the upgrade variable to `always-upgrade-to-latest-minor` and re-run the relevant tag.
+
+| Component | Command |
+|---|---|
+| WarehousePG cluster | `ansible-playbook -i <inventory> playbook.yml -e whpg_upgrade=always-upgrade-to-latest-minor --tags deploy` |
+| WEM dashboard | `ansible-playbook -i <inventory> playbook.yml -e wem_upgrade=always-upgrade-to-latest-minor --tags warehouse-pg-wem-dashboard` |
+| Observability collector | `ansible-playbook -i <inventory> playbook.yml -e collector_upgrade=always-upgrade-to-latest-minor --tags warehouse-pg-observability-collector` |
+| ACP host agent | `ansible-playbook -i <inventory> playbook.yml -e acp_agent_upgrade=always-upgrade-to-latest-minor --tags acp-host-agent` |
+
+**Binary-based components** (Prometheus, Loki, Alertmanager, Temporal): set the version variable and re-run the relevant tag — the role reinstalls automatically when the version differs from what is installed.
+
+| Component | Variable | Command |
+|---|---|---|
+| Prometheus | `prometheus_version` | `ansible-playbook -i <inventory> playbook.yml -e prometheus_version=3.6.0 --tags warehouse-pg-observability` |
+| Loki | `loki_version` | `ansible-playbook -i <inventory> playbook.yml -e loki_version=3.6.0 --tags warehouse-pg-observability` |
+| Alertmanager | `alertmanager_version` | `ansible-playbook -i <inventory> playbook.yml -e alertmanager_version=0.34.0 --tags warehouse-pg-observability` |
+| Temporal | `temporal_version` | `ansible-playbook -i <inventory> playbook.yml -e temporal_version=1.32.0 --tags warehouse-pg-wem-workflow-manager` |
+
+To pin a specific RPM version for RPM-based components:
+
+| Component | Variable | Example |
+|---|---|---|
+| WEM dashboard | `wem_version` | `-e wem_version=1.2.3` |
+| Observability collector | `obs_collector_version` | `-e obs_collector_version=1.2.3` |
+| ACP host agent | `acp_agent_version` | `-e acp_agent_version=1.2.3` |
+
+---
+
+### Infrastructure provisioning (Terraform)
+
+The `Testing/` directory contains OpenTofu/Terraform configuration that provisions the underlying infrastructure on AWS:
+
+- **7 EC2 instances** (`m7a.large`, Rocky Linux 9) by default
+
+Terraform generates all five inventory files automatically on `apply`. To override the instance count, type, or jumphost username without editing `main.tf`, create `Testing/terraform.tfvars` and/or `Testing/override.tf`:
+
+```hcl
+# Testing/terraform.tfvars — variable overrides
+edb_jumphost_username = "your.name"
 ```
 
-## Deploy cluster(s) using Ansible
-
-Run from inside this directory.
-
-For installing WarehousePG, use:
-
+```hcl
+# Testing/override.tf — resource attribute overrides
+resource "aws_instance" "ec2_nodes" {
+  count         = 3
+  instance_type = "t3a.small"
+}
 ```
-ansible-playbook playbook.yml
+
+```bash
+cd Testing
+aws sso login --profile whpg
+tofu apply -auto-approve
+
+cd ../WarehousePG
+ansible-playbook -i inventory-with-monitoring.yml playbook.yml --tags "deploy,wem,warehouse-pg-observability,warehouse-pg-observability-collector,acp-host-agent"
 ```
+
+---
 
 ## Generated files
 
@@ -140,6 +743,40 @@ The role will generate a number of files In the home directory of `WHPG_UNIX_USE
 ~/cluster_hostfile_segments_<cluster_name>       # only if segment hosts are defined
 ~/gpinitsystem_<cluster_name>                    # the gpinitsystem file used to initialize the cluster
 ```
+
+---
+
+## Database users
+
+The `warehouse-pg` role can create or update WarehousePG database roles on the coordinator via the `whpg_db_roles` variable. Each entry creates the role if it does not exist, or updates the password and privileges if it does. Runs on the coordinator only.
+
+```yaml
+whpg_db_roles:
+  - name: reporting
+    password: "r3port!"
+  - name: etl_admin
+    password: "etl123"
+    createdb: true
+  - name: wem_user
+    password: "admin"
+    superuser: true
+```
+
+| Key | Required | Default | Description |
+|---|---|---|---|
+| `name` | yes | — | Role name. |
+| `password` | no | — | Login password. Omit for passwordless roles. |
+| `superuser` | no | `false` | Grant `SUPERUSER` privilege. |
+| `createdb` | no | `false` | Grant `CREATEDB` privilege. |
+| `createrole` | no | `false` | Grant `CREATEROLE` privilege. |
+
+Run standalone (skips cluster deploy, SSH key exchange, etc.):
+
+```bash
+ansible-playbook playbook.yml --tags roles
+```
+
+---
 
 ## Customizing `pg_hba.conf`
 
@@ -184,6 +821,8 @@ additional_pg_hba_conf:
     method: cert
     options: clientcert=verify-full
 ```
+
+---
 
 ## Standby coordinator
 
@@ -425,7 +1064,7 @@ This section lists every non-internal variable referenced by the roles. Variable
 | `DNF_TIMEOUT` | `120` | Maximum time (seconds) to wait for the RPM repository. |
 | `whpg_remove_old_gpAdminLogs` | `false` | Add maintenance jobs to remove old `gpAdminLogs` logfiles on coordinator/standby. |
 | `whpg_remove_old_logs` | `false` | Add maintenance job to remove old data-directory logfiles. |
-| `greenplum_path` | `"/usr/local/greenplum-db/greenplum_path.sh"` | Path to the `greenplum_path.sh` environment script. |
+| `greenplum_path` | `"/usr/edb/whpg7/greenplum_path.sh"` | Path to the `greenplum_path.sh` environment script. |
 
 #### Optional variables (no default; validated only when defined)
 
@@ -433,6 +1072,19 @@ This section lists every non-internal variable referenced by the roles. Variable
 |---|---|
 | `whpg_seg_base_port` | Base port for segments. Integer, 1024--65535. Validated only when defined and non-empty. |
 | `additional_pg_hba_conf` | List of additional `pg_hba.conf` entries to apply on the coordinator. See the "Customizing `pg_hba.conf`" section above for the entry schema. |
+| `whpg_db_roles` | List of database roles to create or update on the coordinator. See the "Database roles" section for the entry schema. Empty by default. |
+
+### Role: `warehouse-pg-wem-dashboard`
+
+See [roles/warehouse-pg-wem-dashboard/README.md](roles/warehouse-pg-wem-dashboard/README.md) for the full variable reference.
+
+### Role: `warehouse-pg-wem-workflow-manager`
+
+See [roles/warehouse-pg-wem-workflow-manager/README.md](roles/warehouse-pg-wem-workflow-manager/README.md) for the full variable reference.
+
+### Role: `acp-host-agent`
+
+See [roles/acp-host-agent/README.md](roles/acp-host-agent/README.md) for the full variable reference.
 
 #### Running upgrades
 

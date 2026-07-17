@@ -1,0 +1,9 @@
+---
+
+- name: Install whpg-enterprise-manager package
+  ansible.builtin.dnf:
+    name: "{{ wem_package_name }}{{ '-' ~ wem_version if wem_version else '' }}"
+    state: "{{ _wem_dnf_state }}"
+  become: true
+  become_user: root
+  timeout: "{{ DNF_TIMEOUT }}"

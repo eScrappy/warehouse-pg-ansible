@@ -1,0 +1,16 @@
+---
+
+- name: Run pre-flight checks
+  ansible.builtin.import_tasks: 01-pre-flight.yml
+
+- name: Install PostgreSQL
+  ansible.builtin.import_tasks: 02-install.yml
+
+- name: Configure PostgreSQL
+  ansible.builtin.import_tasks: 03-configure.yml
+
+- name: Flush handlers to reload pg_hba.conf before any connectivity checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Setup databases and users
+  ansible.builtin.import_tasks: 04-setup-databases.yml

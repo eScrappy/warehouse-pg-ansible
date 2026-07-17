@@ -1,0 +1,38 @@
+---
+
+# Manages WarehousePG database roles defined in whpg_db_roles.
+# Each entry creates the role if missing, or updates the password if the role exists.
+# Run standalone with: ansible-playbook playbook.yml --tags roles
+# Note: requires the cluster to be already deployed (gpadmin user must exist).
+
+- name: Refuse to manage reserved roles
+  ansible.builtin.fail:
+    msg: "Role '{{ item.name }}' is a reserved system role and cannot be managed via whpg_db_roles."
+  loop: "{{ whpg_db_roles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - whpg_db_roles is defined
+    - item.name in ['postgres', 'gpadmin']
+
+- name: Manage WarehousePG database roles
+  ansible.builtin.shell:
+    cmd: |
+      source {{ greenplum_path }}
+      exists=$(psql -p {{ whpg_port }} -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '{{ item.name }}'")
+      if [ "$exists" = "1" ]; then
+        psql -p {{ whpg_port }} -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE {{ item.name }}{% if item.password is defined and item.password | length > 0 %} PASSWORD '{{ item.password }}'{% endif %}{% if item.superuser | default(false) %} SUPERUSER{% endif %}{% if item.createdb | default(false) %} CREATEDB{% endif %}{% if item.createrole | default(false) %} CREATEROLE{% endif %};"
+      else
+        psql -p {{ whpg_port }} -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE {{ item.name }} WITH LOGIN{% if item.password is defined and item.password | length > 0 %} PASSWORD '{{ item.password }}'{% endif %}{% if item.superuser | default(false) %} SUPERUSER{% endif %}{% if item.createdb | default(false) %} CREATEDB{% endif %}{% if item.createrole | default(false) %} CREATEROLE{% endif %};"
+      fi
+    executable: /bin/bash
+  become: true
+  become_user: "{{ WHPG_UNIX_USER }}"
+  no_log: true
+  loop: "{{ whpg_db_roles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - whpg_role == 'coordinator'
+    - whpg_db_roles is defined
+    - whpg_db_roles | length > 0

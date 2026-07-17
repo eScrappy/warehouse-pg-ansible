@@ -1,0 +1,134 @@
+---
+
+- name: Assert wem_upgrade is a valid value
+  ansible.builtin.assert:
+    that:
+      - wem_upgrade is defined
+      - wem_upgrade is string
+      - wem_upgrade in ['install-but-no-automatic-upgrades', 'always-upgrade-to-latest-minor', 'absent']
+    fail_msg: >-
+      wem_upgrade must be 'install-but-no-automatic-upgrades',
+      'always-upgrade-to-latest-minor', or 'absent'
+      (got '{{ wem_upgrade | default('undefined') }}').
+
+- name: Map wem_upgrade to the dnf module's state value
+  ansible.builtin.set_fact:
+    _wem_dnf_state: >-
+      {{ 'latest' if wem_upgrade == 'always-upgrade-to-latest-minor'
+         else ('absent' if wem_upgrade == 'absent' else 'present') }}
+
+# DB connection variables are only required on the install / upgrade path.
+- name: Assert WHPG connection host is set
+  ansible.builtin.assert:
+    that:
+      - whpg_host | length > 0
+    fail_msg: >-
+      whpg_host is empty. Set the hostname of the monitored
+      WarehousePG cluster (group_vars, host_vars, or -e).
+  when: wem_upgrade != 'absent'
+
+- name: Assert WHPG connection user is set
+  ansible.builtin.assert:
+    that:
+      - whpg_user | length > 0
+    fail_msg: >-
+      whpg_user is empty. Set the database user WEM connects to
+      the WarehousePG cluster as.
+  when: wem_upgrade != 'absent'
+
+- name: Assert WEM state connection host is set
+  ansible.builtin.assert:
+    that:
+      - wem_state_db_host | length > 0
+    fail_msg: >-
+      wem_state_db_host is empty. By default this inherits whpg_host;
+      if you overrode it, provide a non-empty value.
+  when: wem_upgrade != 'absent'
+
+- name: Assert WEM state connection user is set
+  ansible.builtin.assert:
+    that:
+      - wem_state_db_user | length > 0
+    fail_msg: >-
+      wem_state_db_user is empty. By default this inherits whpg_user;
+      if you overrode it, provide a non-empty value.
+  when: wem_upgrade != 'absent'
+
+- name: Assert WHPG connection password is set
+  ansible.builtin.assert:
+    that:
+      - whpg_password is defined
+      - whpg_password | string | length > 0
+    fail_msg: "whpg_password is empty. Set the password for whpg_user in the inventory."
+  when: wem_upgrade != 'absent'
+
+- name: Assert WEM state database user password is set when state DB is remote
+  ansible.builtin.assert:
+    that:
+      - wem_state_db_password | default('') | string | length > 0
+    fail_msg: >-
+      wem_state_db_password is empty but wem_state_db_host is '{{ wem_state_db_host }}'.
+      A password is required when the state database is not on localhost.
+  when:
+    - wem_upgrade != 'absent'
+    - wem_state_db_host not in ['127.0.0.1', 'localhost']
+
+- name: Assert database connectivity
+  when: wem_upgrade != 'absent'
+  block:
+    # Local WEM state DB — connect as postgres via peer auth (local socket).
+    # The wem_admin user may not exist yet; we just verify PostgreSQL is reachable.
+    - name: Check database connectivity as {{ wem_state_db_user }} user to {{ wem_state_db_host }}:{{ wem_state_db_port }}
+      ansible.builtin.shell:
+        cmd: >-
+          psql
+          -h {{ wem_state_db_host }}
+          -p {{ wem_state_db_port }}
+          -U {{ wem_state_db_user }}
+          -d postgres
+          -c "SELECT 1" -q --no-align --tuples-only
+        executable: /bin/bash
+      environment:
+        PGPASSWORD: "{{ wem_state_db_password | default('') }}"
+      become: true
+      become_user: postgres
+      register: _wem_state_db_check
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Fail if WEM state database is not reachable
+      ansible.builtin.assert:
+        that: _wem_state_db_check.rc == 0
+        fail_msg: >-
+          Cannot connect to WEM state database at {{ wem_state_db_host }}:{{ wem_state_db_port }}
+          as user '{{ wem_state_db_user }}'.
+          Ensure warehouse-pg-wem-state-database role has run and the service is up.
+          psql error: {{ _wem_state_db_check.stderr | default('(no output)') }}
+
+    # Remote WHPG cluster — connect via TCP with whpg_user credentials.
+    - name: Check WHPG cluster connectivity
+      ansible.builtin.shell:
+        cmd: >-
+          psql
+          -h {{ whpg_host }}
+          -p {{ whpg_port }}
+          -U {{ whpg_user }}
+          -d postgres
+          -c "SELECT 1" -q --no-align --tuples-only
+        executable: /bin/bash
+      environment:
+        PGPASSWORD: "{{ whpg_password }}"
+      register: _whpg_check
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Fail if WHPG cluster is not reachable
+      ansible.builtin.assert:
+        that: _whpg_check.rc == 0
+        fail_msg: >-
+          Cannot connect to WarehousePG cluster at {{ whpg_host }}:{{ whpg_port }}
+          as user '{{ whpg_user }}'.
+          Ensure the cluster is running and the user exists with correct credentials.
+          psql error: {{ _whpg_check.stderr | default('(no output)') }}

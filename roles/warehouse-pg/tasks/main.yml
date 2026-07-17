@@ -25,6 +25,9 @@
 - name: Install WarehousePG extensions
   ansible.builtin.import_tasks: 08-extensions.yml
 
+- name: Manage WarehousePG database roles
+  ansible.builtin.import_tasks: 10-roles.yml
+
 - name: Expand WarehousePG
   ansible.builtin.import_tasks: 09-expand-cluster.yml
   when: whpg_role == 'coordinator' and whpg_expand_db | default(false)

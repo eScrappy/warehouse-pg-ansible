@@ -1,0 +1,34 @@
+---
+
+- name: Check for Red Hat based OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "RedHat"
+    fail_msg: "This role only supports Red Hat based operating systems."
+
+# Pre-flight always runs — it validates wem_upgrade and computes the
+# _wem_dnf_state fact that install.yml uses on every code path. The DB
+# connection assertions inside pre-flight self-gate on wem_upgrade.
+#
+# When wem_upgrade == 'absent', install.yml removes the RPM (which
+# also stops/disables the service via the RPM's %preun scriptlet) and we
+# skip the rest — no config to edit, no service to manage, no gpadmin to
+# provision.
+
+- name: Run pre-flight checks
+  ansible.builtin.import_tasks: 01-pre-flight.yml
+
+- name: Create the WarehousePG Unix user and group
+  ansible.builtin.import_tasks: 02-unix-user.yml
+  when: wem_upgrade != 'absent'
+
+- name: Install WarehousePG Enterprise Manager package
+  ansible.builtin.import_tasks: 03-install.yml
+
+- name: Configure WarehousePG Enterprise Manager
+  ansible.builtin.import_tasks: 04-configure.yml
+  when: wem_upgrade != 'absent'
+
+- name: Manage WarehousePG Enterprise Manager service
+  ansible.builtin.import_tasks: 05-service.yml
+  when: wem_upgrade != 'absent'

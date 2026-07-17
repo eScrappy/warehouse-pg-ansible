@@ -13,4 +13,4 @@
     fail_msg: "edb_token must be defined and not empty."
 
 - name: Install EDB repository
-  ansible.builtin.import_tasks: repository.yml
+  ansible.builtin.import_tasks: 01-repository.yml
